@@ -96,7 +96,7 @@ class OPDSCatalog(object):
         if large_feed_size is None:
             # No limit
             return False
-        return len(libraries) >= large_feed_size 
+        return libraries.count() >= large_feed_size 
 
     @classmethod
     def library_catalog(cls, library, distance=None,
