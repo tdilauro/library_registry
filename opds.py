@@ -2,6 +2,7 @@ from nose.tools import set_trace
 import json
 
 import flask
+from sqlalchemy.orm import Query
 
 from model import (
     ConfigurationSetting,
@@ -72,18 +73,23 @@ class OPDSCatalog(object):
 
         self.add_link_to_catalog(self.catalog, rel="self",
                                  href=url, type=self.OPDS_TYPE)
+        web_client_uri_template = ConfigurationSetting.sitewide(
+            _db, Configuration.WEB_CLIENT_URL
+        ).value
         for library in libraries:
             if not isinstance(library, tuple):
                 library = (library,)
             self.catalog["catalogs"].append(
                 self.library_catalog(
                     *library, url_for=url_for,
-                    include_logo=include_logos
+                    include_logo=include_logos,
+                    web_client_uri_template=web_client_uri_template
                 )
             )
         annotator.annotate_catalog(self, live=live)
 
-    def _feed_is_large(self, _db, libraries):
+    @classmethod
+    def _feed_is_large(cls, _db, libraries):
         """Determine whether a prospective feed is 'large' per a sitewide setting.
 
         :param _db: A database session
@@ -96,13 +102,22 @@ class OPDSCatalog(object):
         if large_feed_size is None:
             # No limit
             return False
-        return libraries.count() >= large_feed_size 
+        if isinstance(libraries, Query):
+            # This is a SQLAlchemy query.
+            size = libraries.count()
+        else:
+            # This is something like a normal Python list.
+            size = len(libraries)
+        return size >= large_feed_size
 
     @classmethod
-    def library_catalog(cls, library, distance=None,
-                        include_private_information=False,
-                        include_logo=True,
-                        url_for=None):
+    def library_catalog(
+            cls, library, distance=None,
+            include_private_information=False,
+            include_logo=True,
+            url_for=None,
+            web_client_uri_template=None
+    ):
 
         """Create an OPDS catalog for a library.
 
@@ -156,7 +171,6 @@ class OPDSCatalog(object):
             cls.add_link_to_catalog(
                 catalog, rel=rel, href=url, type="application/geo+json"
             )
-
         for hyperlink in library.hyperlinks:
             if (not include_private_information and hyperlink.rel in
                 Hyperlink.PRIVATE_RELS):
@@ -168,16 +182,12 @@ class OPDSCatalog(object):
             cls.add_link_to_catalog(
                 catalog, **args
             )
-
         # Add a link for the registry's web client, if it has one.
-        _db = Session.object_session(library)
-        web_client_url = ConfigurationSetting.sitewide(
-            _db, Configuration.WEB_CLIENT_URL).value
-        if web_client_url:
-            web_client_url = web_client_url.replace('{uuid}', library.internal_urn)
+        if web_client_uri_template:
+            web_client_url = web_client_uri_template.replace('{uuid}', library.internal_urn)
             cls.add_link_to_catalog(
-                catalog, href=web_client_url, rel="self", type="text/html")
-
+                catalog, href=web_client_url, rel="self", type="text/html"
+            )
         return catalog
 
     @classmethod

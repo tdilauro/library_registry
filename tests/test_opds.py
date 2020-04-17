@@ -15,6 +15,7 @@ from model import (
     create,
     ConfigurationSetting,
     Hyperlink,
+    Library,
     Validation,
 )
 from opds import OPDSCatalog
@@ -34,6 +35,13 @@ class TestOPDSCatalog(DatabaseTest):
             def annotate_catalog(self, catalog_obj, live=True):
                 catalog_obj.catalog['metadata']['random'] = "Random text inserted by annotator."
 
+        # This template will be used to construct a web client link
+        # for each library.
+        template = "http://web/{uuid}"
+        ConfigurationSetting.sitewide(
+            self._db, Configuration.WEB_CLIENT_URL
+        ).value = template
+
         catalog = OPDSCatalog(
             self._db, "A Catalog!", "http://url/", [l1, l2],
             TestAnnotator(), url_for=self.mock_url_for
@@ -52,6 +60,18 @@ class TestOPDSCatalog(DatabaseTest):
 
         # Each library became a catalog in the catalogs collection.
         eq_([l1.name, l2.name], [x['metadata']['title'] for x in parsed['catalogs']])
+
+        # Each library has a link to its web catalog.
+        l1_links, l2_links = [
+            library['links'] for library in parsed['catalogs']
+        ]
+        [l1_web] = [link['href'] for link in l1_links
+                    if link['type'] == 'text/html']
+        eq_(l1_web, template.replace("{uuid}", l1.internal_urn))
+
+        [l2_web] = [link['href'] for link in l2_links
+                    if link['type'] == 'text/html']
+        eq_(l2_web, template.replace("{uuid}", l2.internal_urn))
 
     def test_large_feeds_treated_differently(self):
         # The libraries in large feeds are converted to JSON in ways
@@ -88,6 +108,34 @@ class TestOPDSCatalog(DatabaseTest):
         small_catalog = small_feed.catalog['catalogs']
         eq_([False], small_catalog)
 
+        # Try it with a query that returns no results. No catalogs
+        # are included at all.
+        small_feed = Mock(self._db, "title", "url", self._db.query(Library))
+        small_catalog = small_feed.catalog['catalogs']
+        eq_([], small_catalog)
+
+    def test_feed_is_large(self):
+        # Verify that the _feed_is_large helper method
+        # works whether it's given a Python list or a SQLAlchemy query.
+        setting = ConfigurationSetting.sitewide(
+            self._db, Configuration.LARGE_FEED_SIZE
+        )
+        setting.value = 2
+        m = OPDSCatalog._feed_is_large
+        query = self._db.query(Library)
+
+        # There are no libraries, and the limit is 2, so a feed of libraries would not be large.
+        eq_(0, query.count())
+        eq_(False, m(self._db, query))
+
+        # Make some libraries, and the feed becomes large.
+        [self._library() for x in range(2)]
+        eq_(True, m(self._db, query))
+
+        # It also works with a list.
+        eq_(True, m(self._db, [1,2]))
+        eq_(False, m(self._db, [1]))
+
     def test_library_catalog(self):
 
         class Mock(OPDSCatalog):
@@ -120,10 +168,10 @@ class TestOPDSCatalog(DatabaseTest):
             "mailto:help@library.org"
         )
 
-        ConfigurationSetting.sitewide(
-            self._db, Configuration.WEB_CLIENT_URL).value = "http://web/{uuid}"
-
-        catalog = Mock.library_catalog(library, url_for=self.mock_url_for)
+        catalog = Mock.library_catalog(
+            library, url_for=self.mock_url_for,
+            web_client_uri_template="http://web/{uuid}"
+        )
         metadata = catalog['metadata']
         eq_(library.name, metadata['title'])
         eq_(library.internal_urn, metadata['id'])
