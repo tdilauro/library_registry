@@ -67,7 +67,7 @@ jobs:
         id: library-registry-tags
         uses: crazy-max/ghaction-docker-meta@v2
         with:
-          images: ${{ secrets.DOCKERHUB_REPO }}/library-registry
+          images: ${{ secrets.DOCKERHUB_ACCOUNT }}/library-registry
           tags: |
             type=ref,event=branch
             type=semver,pattern={{version}}
